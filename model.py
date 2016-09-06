@@ -2,6 +2,8 @@ import tensorflow as tf
 from tensorflow.python.ops import rnn_cell
 from tensorflow.python.ops import seq2seq
 
+import re
+import random
 import numpy as np
 
 class Model():
@@ -58,6 +60,65 @@ class Model():
         optimizer = tf.train.AdamOptimizer(self.lr)
         self.train_op = optimizer.apply_gradients(zip(grads, tvars))
 
+    def sample_tune(self, sess, chars, vocab, T="Something", R="reel", Mt=4, Mb=4, Lt=1, Lb=8, K="Dmaj", sampling_type=1):
+        state = self.cell.zero_state(1, tf.float32).eval()
+        prime = "X: %d\nT: %s\nR: %s\nM: %d/%d\nL: %d/%d\nK: %s\n" % \
+                (1, T, R, Mt, Mb, Lt, Lb, K)
+        
+        for char in prime[:-1]:
+            x = np.zeros((1, 1))
+            x[0, 0] = vocab[char]
+            feed = {self.input_data: x, self.initial_state:state}
+            [state] = sess.run([self.final_state], feed)
+
+        def weighted_pick(weights):
+            t = np.cumsum(weights)
+            s = np.sum(weights)
+            return(int(np.searchsorted(t, np.random.rand(1)*s)))
+
+        num_beats = 0
+        ret = prime
+        char = prime[-1]
+        while char != "X":
+            x = np.zeros((1, 1))
+            x[0, 0] = vocab[char]
+            feed = {self.input_data: x, self.initial_state:state}
+            [probs, state] = sess.run([self.probs, self.final_state], feed)
+            p = probs[0]
+
+            if sampling_type == 0:
+                sample = np.argmax(p)
+            elif sampling_type == 2:
+                if char == " " or char == "|":
+                    sample = weighted_pick(p)
+                else:
+                    sample = np.argmax(p)
+            else: # sampling_type == 1 default:
+                sample = weighted_pick(p)
+
+            pred = chars[sample]
+            # if re.search('[a-gA-G]', pred):
+            #     # Prediction is for another beat
+            #     num_beats += (Lt/float(Lb))
+            # elif re.search('[1-9]', pred):
+            #     # Prediction is for more time to the last beat.
+            #     num_beats += (int(pred) - 1) * (Lt/float(Lb))
+            # if num_beats > (Mt/float(Mb)):
+            #     # If the prediction brings us above the acceptable
+            #     # number of beats for this measure, then replace it
+            #     # with a bar line.
+            #     x = np.zeros((1, 1))
+            #     x[0, 0] = vocab["|"]
+            #     num_beats = 0
+            #     feed = {self.input_data: x, self.initial_state:state}
+            #     [state] = sess.run([self.final_state], feed)
+            #     pred = "|"
+
+            ret += pred
+            char = pred
+        return ret
+
+
     def sample(self, sess, chars, vocab, num=200, prime='The ', sampling_type=1):
         state = self.cell.zero_state(1, tf.float32).eval()
         for char in prime[:-1]:
@@ -83,7 +144,7 @@ class Model():
             if sampling_type == 0:
                 sample = np.argmax(p)
             elif sampling_type == 2:
-                if char == ' ':
+                if char == "|":
                     sample = weighted_pick(p)
                 else:
                     sample = np.argmax(p)
